@@ -665,7 +665,7 @@ export default function App() {
     const list = listFor(type);
     const isDuplicate = list.some((x, i) => x.id === trimmedId && (isNew || i !== originalIndex));
     if (isDuplicate) {
-      showToast(`Id "${trimmedId}" уже используется другой записью — выберите другой id, используйте `, "error");
+      showToast(`Id "${trimmedId}" уже используется другой записью — выберите другой id `, "error");
       return;
     }
 
