@@ -166,7 +166,7 @@ code {
   gap: 4px;
 }
 
-.sidebar .sticky{
+.sidebar .sticky {
   padding: 22px 12px;
   position: sticky;
   top: 0;
@@ -930,6 +930,7 @@ tbody tr:hover {
   max-height: 340px;
   overflow: auto;
   white-space: pre;
+  text-align: initial;
 }
 
 .toast {
