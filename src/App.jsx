@@ -330,6 +330,23 @@ function buildXML(shop, doctors, clinics, services, offers) {
 /* ============================================================
    HELPERS
    ============================================================ */
+function suggestNextId(prefix, list, seedId) {
+  const idsSet = new Set(list.map(x => x.id).filter(Boolean));
+  const seed = seedId || (list.length ? list[list.length - 1].id : "");
+  const m = String(seed || "").match(/^(.*?)(\d+)$/);
+  if (m) {
+    const base = m[1];
+    const digits = m[2].length;
+    let num = parseInt(m[2], 10) + 1;
+    let candidate = base + String(num).padStart(digits, "0");
+    while (idsSet.has(candidate)) {
+      num++;
+      candidate = base + String(num).padStart(digits, "0");
+    }
+    return candidate;
+  }
+  return nextId(prefix, list.map(x => x.id));
+}
 function nextId(prefix, existing) {
   const set = new Set(existing);
   let n = 1;
@@ -630,27 +647,40 @@ export default function App() {
 
   const openNew = type => {
     const data = factoryFor(type)();
-    data.id = nextId(prefixFor(type), listFor(type).map(x => x.id));
-    setEditing({ type, isNew: true, originalId: null, data });
+    data.id = suggestNextId(prefixFor(type), listFor(type));
+    setEditing({ type, isNew: true, originalId: null, originalIndex: -1, data });
   };
-  const openEdit = (type, item) => setEditing({ type, isNew: false, originalId: item.id, data: JSON.parse(JSON.stringify(item)) });
+  const openEdit = (type, item) => {
+    const idx = listFor(type).indexOf(item);
+    setEditing({ type, isNew: false, originalId: item.id, originalIndex: idx, data: JSON.parse(JSON.stringify(item)) });
+  };
   const closeEditor = () => setEditing(null);
 
   const saveEditing = () => {
     if (!editing) return;
-    const { type, isNew, originalId, data } = editing;
-    if (!data.id || !data.id.trim()) { showToast("Укажите id перед сохранением", "error"); return; }
+    const { type, isNew, originalIndex, data } = editing;
+    const trimmedId = (data.id || "").trim();
+    if (!trimmedId) { showToast("Укажите id перед сохранением", "error"); return; }
+
+    const list = listFor(type);
+    const isDuplicate = list.some((x, i) => x.id === trimmedId && (isNew || i !== originalIndex));
+    if (isDuplicate) {
+      showToast(`Id "${trimmedId}" уже используется другой записью — выберите другой id, используйте `, "error");
+      return;
+    }
+
+    const finalData = { ...data, id: trimmedId };
     const setter = setterFor(type);
     setter(prev => {
-      if (isNew) return [...prev, data];
-      return prev.map(x => (x.id === originalId ? data : x));
+      if (isNew) return [...prev, finalData];
+      return prev.map((x, i) => (i === originalIndex ? finalData : x));
     });
     showToast(isNew ? "Запись добавлена" : "Изменения сохранены");
     setEditing(null);
   };
   const duplicateItem = (type, item) => {
     const copy = JSON.parse(JSON.stringify(item));
-    copy.id = nextId(prefixFor(type), listFor(type).map(x => x.id));
+    copy.id = suggestNextId(prefixFor(type), listFor(type), item.id);
     setterFor(type)(prev => [...prev, copy]);
     showToast("Запись продублирована");
   };
