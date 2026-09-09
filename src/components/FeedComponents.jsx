@@ -141,10 +141,17 @@ function ValidationPanel({ validation, onJump }) {
 
 /* ============================================================
    EDITOR DRAWER
+   ---------------------------------------------------------
+   ФИКС: data теперь живёт в локальном state этого компонента,
+   а не в App. Раньше update() дёргал setEditing() в App —
+   значит каждая буква в поле формы ре-рендерила весь App
+   (включая таблицу под drawer'ом). Теперь App не трогается
+   вообще, пока не нажат "Сохранить".
    ============================================================ */
-function EditorDrawer({ editing, setEditing, onClose, onSave, services, clinics, doctors }) {
-    const { type, isNew, data } = editing;
-    const update = patch => setEditing({ ...editing, data: { ...data, ...patch } });
+function EditorDrawer({ editing, onClose, onSave, services, clinics, doctors }) {
+    const { type, isNew } = editing;
+    const [data, setData] = React.useState(editing.data);
+    const update = patch => setData(prev => ({ ...prev, ...patch }));
 
     const titles = { doctor: "Врач", clinic: "Клиника", service: "Услуга", offer: "Предложение" };
 
@@ -167,7 +174,7 @@ function EditorDrawer({ editing, setEditing, onClose, onSave, services, clinics,
                 </div>
                 <div className="drawer-foot">
                     <button className="btn" onClick={onClose}>Отмена</button>
-                    <button className="btn btn-accent" onClick={onSave}><Save size={14} /> Сохранить</button>
+                    <button className="btn btn-accent" onClick={() => onSave(data)}><Save size={14} /> Сохранить</button>
                 </div>
             </div>
         </div>
@@ -409,4 +416,45 @@ function BulkEditorDrawer({ bulkEditing, onClose, onSave, services, clinics, doc
     );
 }
 
-export { BulkEditorDrawer, EntityTable, ValidationPanel, EditorDrawer };
+
+function ConfirmModal({
+    title = "Подтвердите действие",
+    message,
+    confirmText = "Удалить",
+    cancelText = "Отмена",
+    onConfirm,
+    onCancel,
+}) {
+    return (
+        <div
+            className="overlay"
+            onMouseDown={e => {
+                if (e.target === e.currentTarget) onCancel();
+            }}
+        >
+            <div className="confirm-modal">
+                <div className="confirm-modal-icon">
+                    <AlertTriangle size={22} />
+                </div>
+
+                <div className="confirm-modal-content">
+                    <h2>{title}</h2>
+                    <p>{message}</p>
+                </div>
+
+                <div className="confirm-modal-actions">
+                    <button className="btn" onClick={onCancel}>
+                        {cancelText}
+                    </button>
+
+                    <button className="btn btn-danger" onClick={onConfirm}>
+                        <Trash2 size={14} />
+                        {confirmText}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export { BulkEditorDrawer, EntityTable, ValidationPanel, EditorDrawer, ConfirmModal };

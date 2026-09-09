@@ -955,6 +955,61 @@ tbody tr:hover {
   background: var(--error);
 }
 
+.confirm-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+
+    width: min(440px, calc(100vw - 32px));
+    background: var(--card-bg, #fff);
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+
+.confirm-modal-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(220, 38, 38, .1);
+  color: #dc2626;
+  margin-bottom: 16px;
+}
+
+.confirm-modal-content h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.confirm-modal-content p {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7280);
+}
+
+.confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+@keyframes confirm-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (max-width: 860px) {
   .app {
     flex-direction: column;

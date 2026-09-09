@@ -5,7 +5,37 @@ import { parseFeedXML, buildXML } from "./lib/feedXml";
 import { suggestNextId } from "./lib/feedHelpers";
 import { validateFeed } from "./lib/validation";
 import { Field, Text } from "./components/FormControls";
-import { BulkEditorDrawer, EditorDrawer, EntityTable, ValidationPanel } from "./components/FeedComponents";
+import { BulkEditorDrawer, EditorDrawer, EntityTable, ValidationPanel, ConfirmModal } from "./components/FeedComponents";
+
+/* Колонки, которые не зависят от пропсов компонента — выносим на уровень модуля,
+   чтобы не пересоздавать массив на каждый рендер App */
+const DOCTOR_COLUMNS = [
+  {
+    header: "Врач", render: d => <>
+      <div className="cell-title">{d.name || "— без имени —"}</div>
+      <div className="cell-sub">{d.category ? `Категория: ${d.category}` : ""} {d.experience_years ? `· стаж ${d.experience_years} лет` : ""}</div>
+    </>
+  },
+  { header: "ID", render: d => <span className="idpill mono">{d.id}</span> },
+];
+const CLINIC_COLUMNS = [
+  {
+    header: "Клиника", render: c => <>
+      <div className="cell-title">{c.name || "— без названия —"}</div>
+      <div className="cell-sub">{c.city}{c.city && c.address ? ", " : ""}{c.address}</div>
+    </>
+  },
+  { header: "ID", render: c => <span className="idpill mono">{c.id}</span> },
+];
+const SERVICE_COLUMNS = [
+  {
+    header: "Услуга", render: s => <>
+      <div className="cell-title">{s.name || "— без названия —"}</div>
+      <div className="cell-sub">{s.gov_id ? `Код Минздрава: ${s.gov_id}` : ""}</div>
+    </>
+  },
+  { header: "ID", render: s => <span className="idpill mono">{s.id}</span> },
+];
 
 export default function App() {
   const [shop, setShop] = useState(emptyShop());
@@ -20,9 +50,31 @@ export default function App() {
   const [bulkEditing, setBulkEditing] = useState(null);
   const [editing, setEditing] = useState(null); // { type, isNew, originalId, data }
   const [importWarnings, setImportWarnings] = useState([]);
+  const [confirmModal, setConfirmModal] = useState(null);
   const [importSummary, setImportSummary] = useState(null);
   const [toast, setToast] = useState(null);
   const fileRef = useRef(null);
+
+  const requestConfirm = ({ title, message, confirmText = "Удалить", onConfirm }) => {
+    setConfirmModal({
+      title,
+      message,
+      confirmText,
+      onConfirm,
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirmModal(null);
+  };
+
+  const handleConfirm = () => {
+    if (!confirmModal) return;
+
+    const action = confirmModal.onConfirm;
+    setConfirmModal(null);
+    action();
+  };
 
   const showToast = useCallback((msg, kind = "ok") => {
     setToast({ msg, kind });
@@ -43,7 +95,11 @@ export default function App() {
     add(validation.warnings, "warnings");
     return m;
   }, [validation]);
-  const issueCountFor = (section, id) => errorsByEntity.get(`${section}::${id}`) || { errors: 0, warnings: 0 };
+
+  const doctorIssueCountFor = useCallback(id => errorsByEntity.get(`Врачи::${id}`) || { errors: 0, warnings: 0 }, [errorsByEntity]);
+  const clinicIssueCountFor = useCallback(id => errorsByEntity.get(`Клиники::${id}`) || { errors: 0, warnings: 0 }, [errorsByEntity]);
+  const serviceIssueCountFor = useCallback(id => errorsByEntity.get(`Услуги::${id}`) || { errors: 0, warnings: 0 }, [errorsByEntity]);
+  const offerIssueCountFor = useCallback(id => errorsByEntity.get(`Предложения::${id}`) || { errors: 0, warnings: 0 }, [errorsByEntity]);
 
   /* ---------- import / export ---------- */
   const handleImportFile = e => {
@@ -92,11 +148,24 @@ export default function App() {
     catch { showToast("Не удалось скопировать", "error"); }
   };
   const resetAll = () => {
-    if (!window.confirm("Очистить все текущие данные фида? Действие необратимо.")) return;
-    setShop(emptyShop()); setDoctors([]); setClinics([]); setServices([]); setOffers([]);
-    setSelectedIds({ service: [], offer: [] });
-    setImportWarnings([]); setImportSummary(null);
-    showToast("Фид очищен");
+    requestConfirm({
+      title: "Очистить весь фид?",
+      message: "Все врачи, клиники, услуги и предложения будут удалены. Это действие нельзя отменить.",
+      confirmText: "Очистить всё",
+
+      onConfirm: () => {
+        setShop(emptyShop());
+        setDoctors([]);
+        setClinics([]);
+        setServices([]);
+        setOffers([]);
+        setSelectedIds({ service: [], offer: [] });
+        setImportWarnings([]);
+        setImportSummary(null);
+
+        showToast("Фид очищен");
+      }
+    });
   };
 
   /* ---------- entity CRUD ---------- */
@@ -116,9 +185,9 @@ export default function App() {
   };
   const closeEditor = () => setEditing(null);
 
-  const saveEditing = () => {
+  const saveEditing = (data) => {
     if (!editing) return;
-    const { type, isNew, originalIndex, data } = editing;
+    const { type, isNew, originalIndex } = editing;
     const trimmedId = (data.id || "").trim();
     if (!trimmedId) { showToast("Укажите id перед сохранением", "error"); return; }
 
@@ -145,13 +214,35 @@ export default function App() {
     showToast("Запись продублирована");
   };
   const deleteItem = (type, id) => {
-    if (!window.confirm("Удалить запись безвозвратно?")) return;
-    setterFor(type)(prev => prev.filter(x => x.id !== id));
-    if (type === "service" || type === "offer") {
-      setSelectedIds(prev => ({ ...prev, [type]: prev[type].filter(selectedId => selectedId !== id) }));
-    }
-    if (editing && editing.originalId === id) setEditing(null);
-    showToast("Запись удалена");
+    const titles = {
+      doctor: "врача",
+      clinic: "клинику",
+      service: "услугу",
+      offer: "предложение",
+    };
+
+    requestConfirm({
+      title: "Удалить запись?",
+      message: `Вы действительно хотите удалить ${titles[type] || "запись"} «${id}»? Это действие нельзя отменить.`,
+      confirmText: "Удалить",
+
+      onConfirm: () => {
+        setterFor(type)(prev => prev.filter(x => x.id !== id));
+
+        if (type === "service" || type === "offer") {
+          setSelectedIds(prev => ({
+            ...prev,
+            [type]: prev[type].filter(selectedId => selectedId !== id)
+          }));
+        }
+
+        if (editing && editing.originalId === id) {
+          setEditing(null);
+        }
+
+        showToast("Запись удалена");
+      }
+    });
   };
 
   const toggleSelected = (type, id) => {
@@ -183,11 +274,26 @@ export default function App() {
   };
   const deleteSelected = type => {
     const ids = selectedIds[type] || [];
-    if (!ids.length || !window.confirm(`Удалить выбранные записи (${ids.length}) безвозвратно?`)) return;
-    setterFor(type)(prev => prev.filter(item => !ids.includes(item.id)));
-    if (editing && ids.includes(editing.originalId)) setEditing(null);
-    selectItems(type, []);
-    showToast(`Удалено записей: ${ids.length}`);
+    if (!ids.length) return;
+
+    requestConfirm({
+      title: "Удалить выбранные записи?",
+      message: `Будет удалено записей: ${ids.length}. Это действие нельзя отменить.`,
+      confirmText: `Удалить (${ids.length})`,
+
+      onConfirm: () => {
+        setterFor(type)(prev =>
+          prev.filter(item => !ids.includes(item.id))
+        );
+
+        if (editing && ids.includes(editing.originalId)) {
+          setEditing(null);
+        }
+
+        selectItems(type, []);
+        showToast(`Удалено записей: ${ids.length}`);
+      }
+    });
   };
   const openBulkEditor = (type, mode) => setBulkEditing({ type, mode });
   const saveBulkChanges = patch => {
@@ -216,9 +322,13 @@ export default function App() {
     }
   };
 
-  const nameOfDoctor = id => doctors.find(d => d.id === id)?.name || "";
-  const nameOfClinic = id => clinics.find(c => c.id === id)?.name || "";
-  const nameOfService = id => services.find(s => s.id === id)?.name || "";
+  /* Map вместо .find() — O(1) на строку вместо O(n) */
+  const doctorNameById = useMemo(() => new Map(doctors.map(d => [d.id, d.name])), [doctors]);
+  const clinicNameById = useMemo(() => new Map(clinics.map(c => [c.id, c.name])), [clinics]);
+  const serviceNameById = useMemo(() => new Map(services.map(s => [s.id, s.name])), [services]);
+  const nameOfDoctor = id => doctorNameById.get(id) || "";
+  const nameOfClinic = id => clinicNameById.get(id) || "";
+  const nameOfService = id => serviceNameById.get(id) || "";
 
   const filtered = (list, keys, q) => {
     if (!q) return list;
@@ -235,6 +345,23 @@ export default function App() {
       return terms.every(term => searchable.includes(term));
     });
   };
+
+  /* Мемоизированные списки — пересчитываются только когда реально меняются данные/поиск */
+  const filteredDoctors = useMemo(() => filtered(doctors, ["name", "id", "url"], search.doctors), [doctors, search.doctors]);
+  const filteredClinics = useMemo(() => filtered(clinics, ["name", "id", "city", "url"], search.clinics), [clinics, search.clinics]);
+  const filteredServices = useMemo(() => filtered(services, ["name", "id", "gov_id", "url"], search.services), [services, search.services]);
+  const filteredOffersList = useMemo(() => filteredOffers(search.offers), [offers, search.offers, doctorNameById]);
+
+  const offerColumns = useMemo(() => [
+    {
+      header: "Предложение", render: o => <>
+        <div className="cell-title">{nameOfDoctor(o.doctor_id) || "врач не выбран"} — {nameOfService(o.service_id) || "услуга не выбрана"} — {o.speciality}</div>
+        <div className="cell-sub">{o.url || "— без URL —"}</div>
+        <div className="cell-sub">{nameOfClinic(o.clinic_id) || "клиника не выбрана"} {o.price?.base_price ? `· ${o.price.base_price} ${o.price.currency}` : ""}</div>
+      </>
+    },
+    { header: "ID", render: o => <span className="idpill mono">{o.id}</span> },
+  ], [doctorNameById, clinicNameById, serviceNameById]);
 
   const NAV = [
     { key: "overview", label: "Обзор", icon: LayoutGrid, count: null },
@@ -349,20 +476,12 @@ export default function App() {
 
           {tab === "doctors" && (
             <EntityTable
-              title="Врачи" type="doctor" items={filtered(doctors, ["name", "id", "url"], search.doctors)}
+              title="Врачи" type="doctor" items={filteredDoctors}
               onSearch={v => setSearch({ ...search, doctors: v })} searchValue={search.doctors}
               onAdd={() => openNew("doctor")} onEdit={item => openEdit("doctor", item)}
               onDuplicate={item => duplicateItem("doctor", item)} onDelete={id => deleteItem("doctor", id)}
-              issueCountFor={id => issueCountFor("Врачи", id)}
-              columns={[
-                {
-                  header: "Врач", render: d => <>
-                    <div className="cell-title">{d.name || "— без имени —"}</div>
-                    <div className="cell-sub">{d.category ? `Категория: ${d.category}` : ""} {d.experience_years ? `· стаж ${d.experience_years} лет` : ""}</div>
-                  </>
-                },
-                { header: "ID", render: d => <span className="idpill mono">{d.id}</span> },
-              ]}
+              issueCountFor={doctorIssueCountFor}
+              columns={DOCTOR_COLUMNS}
               emptyIcon={Stethoscope} emptyTitle="Пока нет ни одного врача"
               emptyText="Добавьте первого врача вручную или загрузите готовый фид."
             />
@@ -370,20 +489,12 @@ export default function App() {
 
           {tab === "clinics" && (
             <EntityTable
-              title="Клиники" type="clinic" items={filtered(clinics, ["name", "id", "city", "url"], search.clinics)}
+              title="Клиники" type="clinic" items={filteredClinics}
               onSearch={v => setSearch({ ...search, clinics: v })} searchValue={search.clinics}
               onAdd={() => openNew("clinic")} onEdit={item => openEdit("clinic", item)}
               onDuplicate={item => duplicateItem("clinic", item)} onDelete={id => deleteItem("clinic", id)}
-              issueCountFor={id => issueCountFor("Клиники", id)}
-              columns={[
-                {
-                  header: "Клиника", render: c => <>
-                    <div className="cell-title">{c.name || "— без названия —"}</div>
-                    <div className="cell-sub">{c.city}{c.city && c.address ? ", " : ""}{c.address}</div>
-                  </>
-                },
-                { header: "ID", render: c => <span className="idpill mono">{c.id}</span> },
-              ]}
+              issueCountFor={clinicIssueCountFor}
+              columns={CLINIC_COLUMNS}
               emptyIcon={Building2} emptyTitle="Пока нет ни одной клиники"
               emptyText="Клиники нужны, чтобы привязывать к ним врачей и предложения."
             />
@@ -391,7 +502,7 @@ export default function App() {
 
           {tab === "services" && (
             <EntityTable
-              title="Услуги" type="service" items={filtered(services, ["name", "id", "gov_id", "url"], search.services)}
+              title="Услуги" type="service" items={filteredServices}
               onSearch={v => setSearch({ ...search, services: v })} searchValue={search.services}
               onAdd={() => openNew("service")} onEdit={item => openEdit("service", item)}
               onDuplicate={item => duplicateItem("service", item)} onDelete={id => deleteItem("service", id)}
@@ -399,16 +510,8 @@ export default function App() {
               onSelectItems={ids => selectItems("service", ids)}
               onDuplicateSelected={() => duplicateSelected("service")} onDeleteSelected={() => deleteSelected("service")}
               onBulkEdit={() => openBulkEditor("service", "edit")} onDuplicateWithChanges={() => openBulkEditor("service", "duplicate")}
-              issueCountFor={id => issueCountFor("Услуги", id)}
-              columns={[
-                {
-                  header: "Услуга", render: s => <>
-                    <div className="cell-title">{s.name || "— без названия —"}</div>
-                    <div className="cell-sub">{s.gov_id ? `Код Минздрава: ${s.gov_id}` : ""}</div>
-                  </>
-                },
-                { header: "ID", render: s => <span className="idpill mono">{s.id}</span> },
-              ]}
+              issueCountFor={serviceIssueCountFor}
+              columns={SERVICE_COLUMNS}
               emptyIcon={Tags} emptyTitle="Пока нет ни одной услуги"
               emptyText="Услуги используются в предложениях (offers) для связки врач + клиника + цена."
             />
@@ -416,7 +519,7 @@ export default function App() {
 
           {tab === "offers" && (
             <EntityTable
-              title="Предложения" type="offer" items={filteredOffers(search.offers)}
+              title="Предложения" type="offer" items={filteredOffersList}
               onSearch={v => setSearch({ ...search, offers: v })} searchValue={search.offers}
               onAdd={() => openNew("offer")} onEdit={item => openEdit("offer", item)}
               onDuplicate={item => duplicateItem("offer", item)} onDelete={id => deleteItem("offer", id)}
@@ -424,17 +527,8 @@ export default function App() {
               onSelectItems={ids => selectItems("offer", ids)}
               onDuplicateSelected={() => duplicateSelected("offer")} onDeleteSelected={() => deleteSelected("offer")}
               onBulkEdit={() => openBulkEditor("offer", "edit")} onDuplicateWithChanges={() => openBulkEditor("offer", "duplicate")}
-              issueCountFor={id => issueCountFor("Предложения", id)}
-              columns={[
-                {
-                  header: "Предложение", render: o => <>
-                    <div className="cell-title">{nameOfDoctor(o.doctor_id) || "врач не выбран"} — {nameOfService(o.service_id) || "услуга не выбрана"} — {o.speciality}</div>
-                    <div className="cell-sub">{o.url || "— без URL —"}</div>
-                    <div className="cell-sub">{nameOfClinic(o.clinic_id) || "клиника не выбрана"} {o.price?.base_price ? `· ${o.price.base_price} ${o.price.currency}` : ""}</div>
-                  </>
-                },
-                { header: "ID", render: o => <span className="idpill mono">{o.id}</span> },
-              ]}
+              issueCountFor={offerIssueCountFor}
+              columns={offerColumns}
               emptyIcon={Receipt} emptyTitle="Пока нет ни одного предложения"
               emptyText="Предложение связывает врача, клинику и услугу в одну карточку с ценой."
             />
@@ -448,7 +542,8 @@ export default function App() {
 
       {editing && (
         <EditorDrawer
-          editing={editing} setEditing={setEditing} onClose={closeEditor} onSave={saveEditing}
+          key={`${editing.type}-${editing.originalId ?? "new"}`}
+          editing={editing} onClose={closeEditor} onSave={saveEditing}
           services={services} clinics={clinics} doctors={doctors}
         />
       )}
@@ -457,6 +552,16 @@ export default function App() {
         <BulkEditorDrawer
           bulkEditing={bulkEditing} onClose={() => setBulkEditing(null)} onSave={saveBulkChanges}
           services={services} clinics={clinics} doctors={doctors}
+        />
+      )}
+
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText={confirmModal.confirmText}
+          onConfirm={handleConfirm}
+          onCancel={closeConfirm}
         />
       )}
 
