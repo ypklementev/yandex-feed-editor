@@ -6,7 +6,11 @@ import { Area, Badge, Field, RepeatEditor, RowNo, Select, Text, Toggle } from ".
 /* ============================================================
    ENTITY TABLE
    ============================================================ */
-function EntityTable({ title, type, items, onSearch, searchValue, onAdd, onEdit, onDuplicate, onDelete, columns, issueCountFor, emptyIcon: EmptyIcon, emptyTitle, emptyText }) {
+function EntityTable({ title, type, items, onSearch, searchValue, onAdd, onEdit, onDuplicate, onDelete, columns, issueCountFor, emptyIcon: EmptyIcon, emptyTitle, emptyText, selectedIds, onToggleSelection, onSelectItems, onDuplicateSelected, onDeleteSelected, onBulkEdit, onDuplicateWithChanges }) {
+    const isSelectable = Boolean(selectedIds);
+    const selectedCount = selectedIds?.length || 0;
+    const areAllSelected = items.length > 0 && items.every(item => selectedIds?.includes(item.id));
+    const toggleAll = () => onSelectItems(areAllSelected ? [] : items.map(item => item.id));
     return (
         <div>
             <div className="toolbar">
@@ -14,6 +18,15 @@ function EntityTable({ title, type, items, onSearch, searchValue, onAdd, onEdit,
                     <Search size={14} />
                     <input className="ipt" placeholder={`Поиск по ${title.toLowerCase()}…`} value={searchValue} onChange={e => onSearch(e.target.value)} />
                 </div>
+                {isSelectable && selectedCount > 0 && (
+                    <>
+                        <span className="table-selection-count">Выбрано: {selectedCount}</span>
+                        <button className="btn" onClick={onBulkEdit}>Изменить поля</button>
+                        <button className="btn" onClick={onDuplicateSelected}><Copy size={14} /> Дублировать</button>
+                        <button className="btn" onClick={onDuplicateWithChanges}><Copy size={14} /> Дублировать с изменениями</button>
+                        <button className="btn btn-danger" onClick={onDeleteSelected}><Trash2 size={14} /> Удалить</button>
+                    </>
+                )}
                 <button className="btn btn-accent" style={{ marginLeft: "auto" }} onClick={onAdd}><Plus size={15} /> Добавить</button>
             </div>
 
@@ -31,6 +44,7 @@ function EntityTable({ title, type, items, onSearch, searchValue, onAdd, onEdit,
                     <table>
                         <thead>
                             <tr>
+                                {isSelectable && <th style={{ width: 34 }}><input type="checkbox" aria-label="Выбрать все" checked={areAllSelected} onChange={toggleAll} /></th>}
                                 <th style={{ width: 34 }}>№</th>
                                 {columns.map((c, i) => <th key={i}>{c.header}</th>)}
                                 <th style={{ width: 90 }}>Статус</th>
@@ -42,6 +56,7 @@ function EntityTable({ title, type, items, onSearch, searchValue, onAdd, onEdit,
                                 const issues = issueCountFor(item.id);
                                 return (
                                     <tr key={item.id || i}>
+                                        {isSelectable && <td><input type="checkbox" aria-label={`Выбрать ${item.id || `строку ${i + 1}`}`} checked={selectedIds.includes(item.id)} onChange={() => onToggleSelection(item.id)} /></td>}
                                         <td><RowNo n={i + 1} /></td>
                                         {columns.map((c, ci) => <td key={ci}>{c.render(item)}</td>)}
                                         <td>
@@ -295,4 +310,103 @@ function OfferForm({ data, update, services, clinics, doctors }) {
     );
 }
 
-export { EntityTable, ValidationPanel, EditorDrawer };
+function BulkField({ label, enabled, onEnabled, children }) {
+    return (
+        <div className="field-full">
+            <label className="toggle">
+                <input type="checkbox" checked={enabled} onChange={e => onEnabled(e.target.checked)} />
+                <span className="toggle-track"><span className="toggle-thumb" /></span>
+                <span className="toggle-label">Изменить: {label}</span>
+            </label>
+            {enabled && <div style={{ marginTop: 8 }}>{children}</div>}
+        </div>
+    );
+}
+
+function BulkEditorDrawer({ bulkEditing, onClose, onSave, services, clinics, doctors }) {
+    const { type, mode } = bulkEditing;
+    const [enabled, setEnabled] = React.useState({});
+    const [values, setValues] = React.useState({});
+    const setEnabledField = (key, isEnabled) => {
+        setEnabled(prev => ({ ...prev, [key]: isEnabled }));
+        if (!isEnabled) setValues(prev => { const next = { ...prev }; delete next[key]; return next; });
+    };
+    const setValue = (key, value) => setValues(prev => ({ ...prev, [key]: value }));
+    const buildPatch = () => {
+        const patch = {};
+        Object.entries(values).forEach(([key, value]) => {
+            if (key.startsWith("price.")) {
+                patch.price = { ...(patch.price || {}), [key.slice(6)]: value };
+            } else patch[key] = value;
+        });
+        return patch;
+    };
+    const submit = () => onSave(buildPatch());
+    const title = mode === "duplicate" ? "Дублировать с изменениями" : "Изменить выбранные записи";
+    const offerOptions = {
+        doctors: doctors.map(d => ({ value: d.id, label: `${d.name || "без имени"} (${d.id})` })),
+        clinics: clinics.map(c => ({ value: c.id, label: `${c.name || "без названия"} (${c.id})` })),
+        services: services.map(s => ({ value: s.id, label: `${s.name || "без названия"} (${s.id})` }))
+    };
+    const booleanFields = [
+        ["oms", "Приём по ОМС"], ["appointment", "Запись через сайт-поставщик"],
+        ["online_schedule", "Есть онлайн-расписание"], ["children_appointment", "Приём детей"],
+        ["adult_appointment", "Приём взрослых"], ["house_call", "Вызов на дом"],
+        ["telemed", "Телемедицина"], ["is_base_service", "Базовая услуга"]
+    ];
+    const booleanInput = key => (
+        <select className="ipt" value={values[key] === undefined ? "" : String(values[key])} onChange={e => setValue(key, e.target.value === "true")}>
+            <option value="" disabled>— выбрать значение —</option><option value="true">Да</option><option value="false">Нет</option>
+        </select>
+    );
+    return (
+        <div className="overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="drawer">
+                <div className="drawer-head">
+                    <h2>{title}</h2>
+                    <button className="icon-btn" onClick={onClose}><X size={16} /></button>
+                </div>
+                <div className="drawer-body">
+                    <p className="card-sub">Включите только те поля, которые нужно заменить. Остальные значения каждой записи сохранятся как есть.</p>
+                    {type === "service" ? (
+                        <div className="form-grid">
+                            <BulkField label="Название услуги" enabled={enabled.name} onEnabled={v => setEnabledField("name", v)}><Text value={values.name} onChange={v => setValue("name", v)} /></BulkField>
+                            <BulkField label="Код Минздрава" enabled={enabled.gov_id} onEnabled={v => setEnabledField("gov_id", v)}><Text value={values.gov_id} onChange={v => setValue("gov_id", v)} /></BulkField>
+                            <BulkField label="Внутренний ID" enabled={enabled.internal_id} onEnabled={v => setEnabledField("internal_id", v)}><Text value={values.internal_id} onChange={v => setValue("internal_id", v)} /></BulkField>
+                            <BulkField label="Описание" enabled={enabled.description} onEnabled={v => setEnabledField("description", v)}><Area value={values.description} onChange={v => setValue("description", v)} /></BulkField>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="section-label">Связка и цена</div>
+                            <div className="form-grid">
+                                <BulkField label="Врач" enabled={enabled.doctor_id} onEnabled={v => setEnabledField("doctor_id", v)}><Select value={values.doctor_id} onChange={v => setValue("doctor_id", v)} options={offerOptions.doctors} /></BulkField>
+                                <BulkField label="Клиника" enabled={enabled.clinic_id} onEnabled={v => setEnabledField("clinic_id", v)}><Select value={values.clinic_id} onChange={v => setValue("clinic_id", v)} options={offerOptions.clinics} /></BulkField>
+                                <BulkField label="Услуга" enabled={enabled.service_id} onEnabled={v => setEnabledField("service_id", v)}><Select value={values.service_id} onChange={v => setValue("service_id", v)} options={offerOptions.services} /></BulkField>
+                                <BulkField label="Специальность" enabled={enabled.speciality} onEnabled={v => setEnabledField("speciality", v)}><Text value={values.speciality} onChange={v => setValue("speciality", v)} /></BulkField>
+                                <BulkField label="Ссылка на приём" enabled={enabled.url} onEnabled={v => setEnabledField("url", v)}><Text value={values.url} onChange={v => setValue("url", v)} /></BulkField>
+                                <BulkField label="Базовая цена" enabled={enabled["price.base_price"]} onEnabled={v => setEnabledField("price.base_price", v)}><Text value={values["price.base_price"]} onChange={v => setValue("price.base_price", v)} /></BulkField>
+                                <BulkField label="Валюта" enabled={enabled["price.currency"]} onEnabled={v => setEnabledField("price.currency", v)}><Text value={values["price.currency"]} onChange={v => setValue("price.currency", v)} /></BulkField>
+                                <BulkField label="Условие бесплатного приёма" enabled={enabled["price.free_appointment"]} onEnabled={v => setEnabledField("price.free_appointment", v)}><Text value={values["price.free_appointment"]} onChange={v => setValue("price.free_appointment", v)} /></BulkField>
+                                <BulkField label="Скидки" enabled={enabled["price.discounts"]} onEnabled={v => setEnabledField("price.discounts", v)}>
+                                    <RepeatEditor title="" items={values["price.discounts"] || []} onChange={v => setValue("price.discounts", v)}
+                                        empty={() => ({ name: "", value: "" })}
+                                        fields={[{ key: "name", label: "Условие скидки" }, { key: "value", label: "Цена со скидкой" }]} />
+                                </BulkField>
+                            </div>
+                            <div className="section-label">Возможности записи</div>
+                            <div className="form-grid">
+                                {booleanFields.map(([key, label]) => <BulkField key={key} label={label} enabled={enabled[key]} onEnabled={v => setEnabledField(key, v)}>{booleanInput(key)}</BulkField>)}
+                            </div>
+                        </>
+                    )}
+                </div>
+                <div className="drawer-foot">
+                    <button className="btn" onClick={onClose}>Отмена</button>
+                    <button className="btn btn-accent" onClick={submit}><Save size={14} /> {mode === "duplicate" ? "Создать копии" : "Применить"}</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export { BulkEditorDrawer, EntityTable, ValidationPanel, EditorDrawer };

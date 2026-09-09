@@ -5,7 +5,7 @@ import { parseFeedXML, buildXML } from "./lib/feedXml";
 import { suggestNextId } from "./lib/feedHelpers";
 import { validateFeed } from "./lib/validation";
 import { Field, Text } from "./components/FormControls";
-import { EditorDrawer, EntityTable, ValidationPanel } from "./components/FeedComponents";
+import { BulkEditorDrawer, EditorDrawer, EntityTable, ValidationPanel } from "./components/FeedComponents";
 
 export default function App() {
   const [shop, setShop] = useState(emptyShop());
@@ -16,6 +16,8 @@ export default function App() {
 
   const [tab, setTab] = useState("overview");
   const [search, setSearch] = useState({ doctors: "", clinics: "", services: "", offers: "" });
+  const [selectedIds, setSelectedIds] = useState({ service: [], offer: [] });
+  const [bulkEditing, setBulkEditing] = useState(null);
   const [editing, setEditing] = useState(null); // { type, isNew, originalId, data }
   const [importWarnings, setImportWarnings] = useState([]);
   const [importSummary, setImportSummary] = useState(null);
@@ -56,6 +58,7 @@ export default function App() {
         setClinics(parsed.clinics);
         setServices(parsed.services);
         setOffers(parsed.offers);
+        setSelectedIds({ service: [], offer: [] });
         setImportWarnings(parsed.unknown);
         setImportSummary({
           doctors: parsed.doctors.length, clinics: parsed.clinics.length,
@@ -91,6 +94,7 @@ export default function App() {
   const resetAll = () => {
     if (!window.confirm("Очистить все текущие данные фида? Действие необратимо.")) return;
     setShop(emptyShop()); setDoctors([]); setClinics([]); setServices([]); setOffers([]);
+    setSelectedIds({ service: [], offer: [] });
     setImportWarnings([]); setImportSummary(null);
     showToast("Фид очищен");
   };
@@ -143,8 +147,63 @@ export default function App() {
   const deleteItem = (type, id) => {
     if (!window.confirm("Удалить запись безвозвратно?")) return;
     setterFor(type)(prev => prev.filter(x => x.id !== id));
+    if (type === "service" || type === "offer") {
+      setSelectedIds(prev => ({ ...prev, [type]: prev[type].filter(selectedId => selectedId !== id) }));
+    }
     if (editing && editing.originalId === id) setEditing(null);
     showToast("Запись удалена");
+  };
+
+  const toggleSelected = (type, id) => {
+    setSelectedIds(prev => {
+      const ids = prev[type] || [];
+      return { ...prev, [type]: ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id] };
+    });
+  };
+  const selectItems = (type, ids) => setSelectedIds(prev => ({ ...prev, [type]: ids }));
+  const applyBulkPatch = (item, patch) => ({
+    ...item,
+    ...patch,
+    ...(patch.price ? { price: { ...(item.price || {}), ...patch.price } } : {})
+  });
+  const duplicateSelected = (type, patch = {}) => {
+    const ids = selectedIds[type] || [];
+    const originals = listFor(type).filter(item => ids.includes(item.id));
+    if (!originals.length) return;
+    const currentList = [...listFor(type)];
+    const copies = originals.map(item => {
+      const copy = applyBulkPatch(JSON.parse(JSON.stringify(item)), patch);
+      copy.id = suggestNextId(prefixFor(type), currentList, item.id);
+      currentList.push(copy);
+      return copy;
+    });
+    setterFor(type)(prev => [...prev, ...copies]);
+    selectItems(type, copies.map(item => item.id));
+    showToast(`Создано копий: ${copies.length}`);
+  };
+  const deleteSelected = type => {
+    const ids = selectedIds[type] || [];
+    if (!ids.length || !window.confirm(`Удалить выбранные записи (${ids.length}) безвозвратно?`)) return;
+    setterFor(type)(prev => prev.filter(item => !ids.includes(item.id)));
+    if (editing && ids.includes(editing.originalId)) setEditing(null);
+    selectItems(type, []);
+    showToast(`Удалено записей: ${ids.length}`);
+  };
+  const openBulkEditor = (type, mode) => setBulkEditing({ type, mode });
+  const saveBulkChanges = patch => {
+    if (!bulkEditing) return;
+    if (Object.keys(patch).length === 0) {
+      showToast("Выберите хотя бы одно поле для изменения", "error");
+      return;
+    }
+    const { type, mode } = bulkEditing;
+    const ids = selectedIds[type] || [];
+    if (mode === "duplicate") duplicateSelected(type, patch);
+    else {
+      setterFor(type)(prev => prev.map(item => ids.includes(item.id) ? applyBulkPatch(item, patch) : item));
+      showToast(`Обновлено записей: ${ids.length}`);
+    }
+    setBulkEditing(null);
   };
 
   const jumpTo = (section, entityId) => {
@@ -165,6 +224,16 @@ export default function App() {
     if (!q) return list;
     const lq = q.toLowerCase();
     return list.filter(item => keys.some(k => String(item[k] || "").toLowerCase().includes(lq)));
+  };
+  const filteredOffers = q => {
+    if (!q) return offers;
+    const terms = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    return offers.filter(offer => {
+      const searchable = [offer.id, offer.speciality, offer.url, nameOfDoctor(offer.doctor_id)]
+        .map(value => String(value || "").toLowerCase())
+        .join(" ");
+      return terms.every(term => searchable.includes(term));
+    });
   };
 
   const NAV = [
@@ -326,6 +395,10 @@ export default function App() {
               onSearch={v => setSearch({ ...search, services: v })} searchValue={search.services}
               onAdd={() => openNew("service")} onEdit={item => openEdit("service", item)}
               onDuplicate={item => duplicateItem("service", item)} onDelete={id => deleteItem("service", id)}
+              selectedIds={selectedIds.service} onToggleSelection={id => toggleSelected("service", id)}
+              onSelectItems={ids => selectItems("service", ids)}
+              onDuplicateSelected={() => duplicateSelected("service")} onDeleteSelected={() => deleteSelected("service")}
+              onBulkEdit={() => openBulkEditor("service", "edit")} onDuplicateWithChanges={() => openBulkEditor("service", "duplicate")}
               issueCountFor={id => issueCountFor("Услуги", id)}
               columns={[
                 {
@@ -343,10 +416,14 @@ export default function App() {
 
           {tab === "offers" && (
             <EntityTable
-              title="Предложения" type="offer" items={filtered(offers, ["id", "speciality", "url"], search.offers)}
+              title="Предложения" type="offer" items={filteredOffers(search.offers)}
               onSearch={v => setSearch({ ...search, offers: v })} searchValue={search.offers}
               onAdd={() => openNew("offer")} onEdit={item => openEdit("offer", item)}
               onDuplicate={item => duplicateItem("offer", item)} onDelete={id => deleteItem("offer", id)}
+              selectedIds={selectedIds.offer} onToggleSelection={id => toggleSelected("offer", id)}
+              onSelectItems={ids => selectItems("offer", ids)}
+              onDuplicateSelected={() => duplicateSelected("offer")} onDeleteSelected={() => deleteSelected("offer")}
+              onBulkEdit={() => openBulkEditor("offer", "edit")} onDuplicateWithChanges={() => openBulkEditor("offer", "duplicate")}
               issueCountFor={id => issueCountFor("Предложения", id)}
               columns={[
                 {
@@ -376,6 +453,13 @@ export default function App() {
         />
       )}
 
+      {bulkEditing && (
+        <BulkEditorDrawer
+          bulkEditing={bulkEditing} onClose={() => setBulkEditing(null)} onSave={saveBulkChanges}
+          services={services} clinics={clinics} doctors={doctors}
+        />
+      )}
+
       {toast && (
         <div className={"toast" + (toast.kind === "error" ? " error" : "")}>
           {toast.kind === "error" ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />} {toast.msg}
@@ -384,4 +468,3 @@ export default function App() {
     </div>
   );
 }
-
