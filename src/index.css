@@ -158,6 +158,7 @@ code {
 /* ---------- sidebar ---------- */
 .sidebar {
   width: 216px;
+  max-height: 100%;
   flex-shrink: 0;
   background: var(--paper);
   border-right: 1px solid var(--border);
@@ -247,6 +248,12 @@ code {
   font-size: 11px;
   color: var(--ink-faint);
   line-height: 1.5;
+  padding-bottom: 35px;
+}
+
+.sidebar-foot-link {
+  color: var(--ink);
+  font-weight: 700;
 }
 
 /* ---------- main ---------- */
@@ -956,16 +963,16 @@ tbody tr:hover {
 }
 
 .confirm-modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 
-    width: min(440px, calc(100vw - 32px));
-    background: var(--card-bg, #fff);
-    border-radius: 14px;
-    padding: 24px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+  width: min(440px, calc(100vw - 32px));
+  background: var(--card-bg, #fff);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
 }
 
 .confirm-modal-icon {

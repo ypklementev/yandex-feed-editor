@@ -393,6 +393,12 @@ export default function App() {
         </div>
         <div className="sidebar-foot">
           Данные хранятся только в этой сессии — не забудьте скачать XML перед закрытием вкладки.
+          <br></br>
+          <span className="sidebar-foot-link">
+            <a className="sidebar-foot-link" href="https://ypklementev.ru" target="_blank" rel="noopener noreferrer">
+              Powered by ypklementev.ru
+            </a>
+          </span>
         </div>
       </div>
 
