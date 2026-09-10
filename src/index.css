@@ -57,7 +57,7 @@ body {
 }
 
 #root {
-  width: 1126px;
+  /* width: 1126px; */
   max-width: 100%;
   margin: 0 auto;
   text-align: center;
@@ -243,12 +243,11 @@ code {
 }
 
 .sidebar-foot {
-  margin-top: auto;
+  margin-top: 50vh;
   padding: 12px 10px 2px;
   font-size: 11px;
   color: var(--ink-faint);
   line-height: 1.5;
-  padding-bottom: 35px;
 }
 
 .sidebar-foot-link {
